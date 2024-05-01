@@ -1,0 +1,217 @@
+from google.colab import drive
+drive.mount('/content/drive')
+import cv2
+import numpy as np
+import pandas as pd
+import os
+from tabulate import tabulate
+
+# Functions for NDVI, EVI, SAVI, and additional vegetation indices/features
+def calculate_ndvi(nir, red):
+    return (nir - red) / (nir + red + 1e-8)
+
+def calculate_evi(nir, red, blue):
+    evi = 2.5 * (nir - red) / (nir + 6 * red - 7.5 * blue + 1 + 1e-8)
+    return evi
+
+def calculate_savi(nir, red):
+    return ((nir - red) / (nir + red + 0.5 + 1e-8)) * 1.5
+
+def calculate_dvi(nir, red):
+    return nir - red
+
+def calculate_arvi(nir, red, blue):
+    return (nir - (2 * red - blue)) / (nir + (2 * red - blue) + 1e-8)
+
+def calculate_gemi(nir, red, green):
+    return ((2 * (nir ** 2 - red ** 2) + 1.5 * nir + 0.5 * red) / (nir + red + 0.5 + 1e-8))
+
+def calculate_lai(nir, red):
+    return (nir - red) / (nir + red + 0.5 + 1e-8)
+
+def calculate_wbi(nir, swir):
+    return (swir - nir) / (swir + nir + 0.5 + 1e-8)
+
+def calculate_ci(nir, red):
+    return (nir / red) - 1
+
+def calculate_ccci(nir, red):
+    return np.log((nir) / (red)) / (np.log(2) + 1e-8)
+
+# Function to extract spectral features for all images in multiple directories
+def extract_spectral_features_from_directories(directories):
+    all_results = []
+    for directory in directories:
+        if os.path.isdir(directory):
+            results = extract_spectral_features_from_directory(directory)
+            if results is not None:
+                all_results.extend(results)
+    return pd.DataFrame(all_results) if all_results else None
+
+# Function to extract spectral features for all images in a directory
+def extract_spectral_features_from_directory(directory):
+    results = []
+    for filename in os.listdir(directory):
+        if filename.lower().endswith(('.png', '.jpg', '.jpeg', '.tif')):
+            image_path = os.path.join(directory, filename)
+            result_df = extract_spectral_features(image_path)
+            if result_df is not None:
+                results.append(result_df)
+    return results if results else None
+
+# Function to extract spectral features for a single image
+def extract_spectral_features(image_path):
+    try:
+        image = cv2.imread(image_path)
+
+        if image is None:
+            raise FileNotFoundError(f"Unable to load image: {image_path}")
+
+        nir_band = image[:, :, 0].astype(np.float32)
+        red_band = image[:, :, 1].astype(np.float32)
+        blue_band = image[:, :, 2].astype(np.float32)
+        green_band = image[:, :, 1].astype(np.float32)
+        swir_band = image[:, :, 1].astype(np.float32)
+
+        ndvi = calculate_ndvi(nir_band, red_band)
+        evi = calculate_evi(nir_band, red_band, blue_band)
+        savi = calculate_savi(nir_band, red_band)
+        dvi = calculate_dvi(nir_band, red_band)
+        arvi = calculate_arvi(nir_band, red_band, blue_band)
+        gemi = calculate_gemi(nir_band, red_band, green_band)
+        lai = calculate_lai(nir_band, red_band)
+        wbi = calculate_wbi(nir_band, swir_band)
+        ci = calculate_ci(nir_band, red_band)
+        ccci = calculate_ccci(nir_band, red_band)
+
+        mean_ndvi = np.mean(ndvi)
+        mean_evi = np.mean(evi)
+        mean_savi = np.mean(savi)
+        mean_dvi = np.mean(dvi)
+        mean_arvi = np.mean(arvi)
+        mean_gemi = np.mean(gemi)
+        mean_lai = np.mean(lai)
+        mean_wbi = np.mean(wbi)
+        mean_ci = np.mean(ci)
+        mean_ccci = np.mean(ccci)
+
+        return {
+            'Image': image_path,
+            'Mean NDVI': mean_ndvi,
+            'Mean EVI': mean_evi,
+            'Mean SAVI': mean_savi,
+            'Mean DVI': mean_dvi,
+            'Mean ARVI': mean_arvi,
+            'Mean GEMI': mean_gemi,
+            'Mean LAI': mean_lai,
+            'Mean WBI': mean_wbi,
+            'Mean CI': mean_ci,
+            'Mean CCCI': mean_ccci
+        }
+
+    except Exception as e:
+        print(f"Error processing {image_path}: {e}")
+        return None
+
+# Directory containing subdirectories with image files
+parent_directory = '/content/drive/MyDrive/spectral/RiceLeafsDisease/train'
+
+# Get all subdirectories within the parent directory
+subdirectories = [os.path.join(parent_directory, d) for d in os.listdir(parent_directory) if os.path.isdir(os.path.join(parent_directory, d))]
+
+# Extract spectral features for all images in multiple directories
+result_df = extract_spectral_features_from_directories(subdirectories)
+
+if result_df is not None:
+    # Adding an 'Infectious' column with 'infected' for all rows
+    result_df['Status'] = 'infected'
+
+    # Print the tabulated data
+    print(tabulate(result_df, headers='keys', tablefmt='grid'))
+
+    # Save extracted features to a CSV file
+    result_df.to_csv('spectral_features_with_infectious.csv', index=False)
+    print("Spectral features (with 'Infectious' column) saved to 'spectral_features_with_infectious.csv'.")
+else:
+    print("No data extracted.")
+from google.colab import files
+
+# Specify the filename of the CSV file you want to download
+csv_filename = 'spectral_features_with_infectious.csv'
+
+# Use the files.download() function to download the file
+files.download(csv_filename)
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score, classification_report
+from sklearn.preprocessing import RobustScaler
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
+import joblib
+
+# Load the spectral features dataset
+df = pd.read_csv('/content/spectral_features_with_infectious (1).csv')
+
+# Replace infinity values with NaN
+df.replace([np.inf, -np.inf], np.nan, inplace=True)
+
+# Calculate mean for each column
+means = df.mean()
+
+# Replace NaN (originally infinity) with mean values
+df.fillna(means, inplace=True)
+
+# Splitting the data into features (X) and target variable (y)
+X = df.drop(['Image', 'Status ', 'Mean CCCI'], axis=1)  # Features
+y = df['Status ']  # Target variable
+
+# Scale the features to a range of [0, 1]
+scaler = RobustScaler()
+X_scaled = scaler.fit_transform(X)
+
+# Splitting the scaled data into training and testing sets
+X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
+
+# Initialize Random Forest Classifier
+clf = RandomForestClassifier(n_estimators=100, random_state=42)
+
+# Train the classifier
+clf.fit(X_train, y_train)
+
+# Predict on the test set
+y_pred = clf.predict(X_test)
+
+# Calculate accuracy
+accuracy = accuracy_score(y_test, y_pred)
+print(f"Random Forest Accuracy: {accuracy:.2f}")
+
+# Display classification report
+print("Random Forest Classification Report:")
+print(classification_report(y_test, y_pred))
+
+# Visualize classification report
+report = classification_report(y_test, y_pred, output_dict=True)
+df_report = pd.DataFrame(report).transpose()
+plt.figure(figsize=(8, 6))
+sns.heatmap(df_report.iloc[:-1, :-1], annot=True, cmap='YlGnBu')
+plt.title('Random Forest Classification Report')
+plt.show()
+
+model_path = '/content/my_model.pkl'
+joblib.dump(clf, model_path)
+
+from google.colab import files
+
+# Display the file manager
+files.view('/content')
+#functional testing
+
+x=[[-0.051182,-1431250.1,-0.07660462,-12.1815405,-0.05489488,-23.338646,-0.05106975,0.05106975,-0.066435985]]
+print(clf.predict(x))+
+++
+from google.colab import files
+
+# Display the file manager
+files.view('/content')
